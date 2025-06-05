@@ -299,7 +299,7 @@ class ChatGPTAPI:
     if not model or model not in model_cards:
       if DEBUG >= 1: print(f"Invalid model: {model}. Supported: {list(model_cards.keys())}. Defaulting to {self.default_model}")
       model = self.default_model
-    shard = build_base_shard(model, self.inference_engine_classname)
+    shard = build_full_shard(model, self.inference_engine_classname)
     messages = [parse_message(msg) for msg in data.get("messages", [])]
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
     prompt = build_prompt(tokenizer, messages, data.get("tools", None))
@@ -331,7 +331,7 @@ class ChatGPTAPI:
     if not chat_request.model or chat_request.model not in model_cards:
       if DEBUG >= 1: print(f"[ChatGPTAPI] Invalid model: {chat_request.model}. Supported: {list(model_cards.keys())}. Defaulting to {self.default_model}")
       chat_request.model = self.default_model
-    shard = build_base_shard(chat_request.model, self.inference_engine_classname)
+    shard = build_full_shard(chat_request.model, self.inference_engine_classname)
     if not shard:
       supported_models = [model for model, info in model_cards.items() if self.inference_engine_classname in info.get("repo", {})]
       return web.json_response(
@@ -458,7 +458,7 @@ class ChatGPTAPI:
     prompt = data.get("prompt", "")
     image_url = data.get("image_url", "")
     if DEBUG >= 2: print(f"model: {model}, prompt: {prompt}, stream: {stream}")
-    shard = build_base_shard(model, self.inference_engine_classname)
+    shard = build_full_shard(model, self.inference_engine_classname)
     if DEBUG >= 2: print(f"shard: {shard}")
     if not shard:
       return web.json_response({"error": f"Unsupported model: {model} with inference engine {self.inference_engine_classname}"}, status=400)

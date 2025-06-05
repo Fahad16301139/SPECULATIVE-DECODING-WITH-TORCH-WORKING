@@ -26,7 +26,7 @@ from exo.helpers import print_yellow_exo, find_available_port, DEBUG, get_system
 from exo.inference.shard import Shard
 from exo.inference.inference_engine import get_inference_engine
 from exo.inference.tokenizers import resolve_tokenizer
-from exo.models import build_base_shard, get_repo
+from exo.models import build_base_shard, build_full_shard, get_repo
 from exo.viz.topology_viz import TopologyViz
 import uvloop
 import concurrent.futures
@@ -318,7 +318,7 @@ async def run_model_cli(node: Node, model_name: str, prompt: str):
   else:
     inference_class = node.inference_engine.__class__.__name__
     
-  shard = build_base_shard(model_name, inference_class)
+  shard = build_full_shard(model_name, inference_class)
   if not shard:
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_class}")
     return
@@ -378,7 +378,7 @@ async def eval_model_cli(node: Node, model_name, dataloader, batch_size, num_bat
   else:
     inference_class = node.inference_engine.__class__.__name__
     
-  shard = build_base_shard(model_name, inference_class)
+  shard = build_full_shard(model_name, inference_class)
   if not shard:
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_class}")
     return
@@ -397,7 +397,7 @@ async def train_model_cli(node: Node, model_name, dataloader, batch_size, iters,
   else:
     inference_class = node.inference_engine.__class__.__name__
     
-  shard = build_base_shard(model_name, inference_class)
+  shard = build_full_shard(model_name, inference_class)
   if not shard:
     print(f"Error: Unsupported model '{model_name}' for inference engine {inference_class}")
     return

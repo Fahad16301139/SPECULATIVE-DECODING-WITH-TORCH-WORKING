@@ -138,17 +138,26 @@ class Node:
           
           intermediate_result = generated_tokens
           
-          if not is_finished and generated_tokens:
-            # CRITICAL FIX: Accumulate full context instead of just last token
-            # Add the new tokens to the full conversation context
+          # ARCHITECTURAL FIX: For speculative engines, always use token IDs for forwarding
+          if generated_tokens is not None:
+            # Get the full conversation context as token IDs  
             full_context = self.buffered_token_output[request_id][0]
             forward = np.array([full_context]).reshape(1, -1)
+            
             if DEBUG >= 2:
                 print(f"[{request_id}] Context accumulation: {len(generated_tokens)} new tokens, total context: {len(full_context)}")
                 print(f"[{request_id}] Forward shape: {forward.shape}, last 5 tokens: {forward[0, -5:].tolist()}")
+                print(f"[{request_id}] Forward data type: token IDs (not logits)")
+                
+            # Validate that we're forwarding token IDs, not logits
+            if forward.ndim == 3 or (forward.ndim == 2 and forward.shape[-1] > 50000):
+                print(f"🚨 WARNING: Forward tensor looks like logits! Shape: {forward.shape}")
+                print(f"    This suggests an architectural issue - speculative engines should forward token IDs")
           else:
+            # For regular single-token engines, use the result (logits)
             forward = result
         else:
+          # Regular single-token inference path
           token = await self.inference_engine.sample(result, temp=self.default_sample_temperature)
           await self.inference_engine.ensure_shard(shard)
           self.buffered_token_output[request_id][0].append(token.item())

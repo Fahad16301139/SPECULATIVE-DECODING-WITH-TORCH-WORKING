@@ -226,29 +226,29 @@ class SpeculativeInferenceEngine(InferenceEngine):
             else:
                 print(f"✅ Speculative parameters look valid")
         
-        # Initialize working variables
-        # CRITICAL FIX: Check if input contains logits instead of token IDs
-        if input_data.ndim == 3 and input_data.shape[-1] > 1000:  # Logits have vocab_size as last dim
-            if DEBUG >= 1:
-                print(f"🔧 DETECTED LOGITS INPUT: Converting from shape {input_data.shape}")
-                print(f"   Logits range: [{input_data.min():.3f}, {input_data.max():.3f}]")
-            
-            # Sample token IDs from logits using argmax (deterministic for consistency)
-            if input_data.ndim == 3:  # (batch, seq, vocab)
-                # Use argmax to get most likely tokens
-                token_ids = np.argmax(input_data, axis=-1)  # (batch, seq)
-                out = token_ids.copy()
-                if DEBUG >= 1:
-                    print(f"   Converted to token IDs shape: {out.shape}")
-                    print(f"   Token IDs sample: {out[0, -5:].tolist()}")
-            else:
-                raise ValueError(f"Unexpected logits shape: {input_data.shape}")
+        # Initialize working variables - input should always be token IDs now
+        if DEBUG >= 2:
+            print(f"🔍 INPUT VALIDATION: shape={input_data.shape}, dtype={input_data.dtype}")
+            print(f"   Range: [{input_data.min():.3f}, {input_data.max():.3f}]")
+            if input_data.ndim == 3 and input_data.shape[-1] > 1000:
+                print(f"🚨 WARNING: Input has shape suggesting logits, but node should pass token IDs!")
+        
+        # Handle token ID input (should be the only case now)
+        if input_data.ndim == 1:
+            out = input_data.reshape(1, -1).copy()
         else:
-            # Handle normal token ID input
-            if input_data.ndim == 1:
-                out = input_data.reshape(1, -1).copy()
-            else:
-                out = input_data.copy()
+            out = input_data.copy()
+            
+        # CRITICAL: Check for empty input early to prevent crashes
+        if out.size == 0 or (out.ndim >= 1 and out.shape[-1] == 0):
+            if DEBUG >= 1:
+                print(f"🚨 EMPTY INPUT DETECTED: {out.shape}")
+                print(f"   Cannot perform speculative decoding on empty sequence!")
+                print(f"   Falling back to target engine only...")
+            
+            # Fallback to target engine for empty input
+            result, state = await self.target_engine.infer_tensor(request_id, shard, input_data, inference_state)
+            return result, state, []
             
         cache = inference_state
         small_cache = None
@@ -268,8 +268,12 @@ class SpeculativeInferenceEngine(InferenceEngine):
         if DEBUG >= 1:
             print(f"\n🔍 MODEL VERIFICATION PHASE:")
             print(f"   Input 'out' shape: {out.shape}, dtype: {out.dtype}")
-            print(f"   Input 'out' range: [{out.min():.3f}, {out.max():.3f}]")
-            print(f"   Input 'out' sample values: {out.flatten()[:5].tolist()}")
+            if out.size > 0:
+                print(f"   Input 'out' range: [{out.min():.3f}, {out.max():.3f}]")
+                print(f"   Input 'out' sample values: {out.flatten()[:5].tolist()}")
+            else:
+                print(f"   🚨 CRITICAL: Input 'out' is EMPTY! This will cause failures.")
+                print(f"   Input 'out' sample values: []")
             
             # Test both engines on same input to verify they're different
             # Ensure we handle 1D input_data properly
@@ -278,14 +282,19 @@ class SpeculativeInferenceEngine(InferenceEngine):
             else:
                 test_input = out[:, :min(5, out.shape[1])]  # First 5 tokens
             
-            print(f"   Testing both models on input shape: {test_input.shape}")
-            print(f"   Test input tokens: {test_input.flatten()[:5].astype(np.int64).tolist()}")
-            print(f"   Test input dtype: {test_input.dtype}")
-            
-            # Ensure test input is integer tokens
-            if test_input.dtype != np.int64:
-                print(f"   🔧 Converting test input from {test_input.dtype} to int64")
-                test_input = test_input.astype(np.int64)
+            # Skip model verification if test input would be empty
+            if test_input.size == 0:
+                print(f"   ⚠️  Skipping model verification - test input would be empty")
+                print(f"   Test input shape: {test_input.shape}")
+            else:
+                print(f"   Testing both models on input shape: {test_input.shape}")
+                print(f"   Test input tokens: {test_input.flatten()[:5].astype(np.int64).tolist()}")
+                print(f"   Test input dtype: {test_input.dtype}")
+                
+                # Ensure test input is integer tokens
+                if test_input.dtype != np.int64:
+                    print(f"   🔧 Converting test input from {test_input.dtype} to int64")
+                    test_input = test_input.astype(np.int64)
             
             # CRITICAL: Check if models are actually being loaded from different sources
             print(f"\n   🔍 PRE-INFERENCE MODEL STATE:")
@@ -326,8 +335,13 @@ class SpeculativeInferenceEngine(InferenceEngine):
             print(f"   🎯 Target config: {target_config}")
             print(f"   📝 Draft config: {draft_config}")
             
-            target_test, _ = await self.target_engine.infer_tensor(f"{request_id}_verify_target", shard, test_input)
-            draft_test, _ = await self.draft_engine.infer_tensor(f"{request_id}_verify_draft", draft_shard, test_input)
+            # Only run model inference if we have valid test input
+            if test_input.size > 0:
+                target_test, _ = await self.target_engine.infer_tensor(f"{request_id}_verify_target", shard, test_input)
+                draft_test, _ = await self.draft_engine.infer_tensor(f"{request_id}_verify_draft", draft_shard, test_input)
+            else:
+                print(f"   ⚠️  Skipping model inference verification due to empty test input")
+                # Continue with rest of the function without model comparison
             
             print(f"\n   🎯 Target output shape: {target_test.shape}")
             print(f"   📝 Draft output shape: {draft_test.shape}")
@@ -437,7 +451,9 @@ class SpeculativeInferenceEngine(InferenceEngine):
                 print(f"      Draft logits shape: {draft_logits.shape}")
                 print(f"      Draft logits range: [{draft_logits.min():.3f}, {draft_logits.max():.3f}]")
             
-            draft_probs = self._softmax(draft_logits)
+            # Apply temperature to logits before softmax
+            draft_logits_tempered = draft_logits / self.temperature
+            draft_probs = self._softmax(draft_logits_tempered)
             draft_token = self._sample_from_probs(draft_probs[0, 0, :])
             
             draft_tokens.append(draft_token)
@@ -498,7 +514,9 @@ class SpeculativeInferenceEngine(InferenceEngine):
         
         for i in range(self.gamma):
             target_pos_logits = target_logits[:, i, :]  # Target logits at position i
-            target_probs = self._softmax(target_pos_logits)
+            # Apply temperature to target logits before softmax
+            target_pos_logits_tempered = target_pos_logits / self.temperature
+            target_probs = self._softmax(target_pos_logits_tempered)
             
             # Get draft and target probabilities for the drafted token
             drafted_token = draft_tokens[i]
@@ -520,7 +538,9 @@ class SpeculativeInferenceEngine(InferenceEngine):
                 None  # Fresh cache for verification
             )
             draft_verify_logits = draft_output_verify[:, -1, :]
-            draft_verify_probs = self._softmax(draft_verify_logits)
+            # Apply temperature to draft verification logits before softmax
+            draft_verify_logits_tempered = draft_verify_logits / self.temperature
+            draft_verify_probs = self._softmax(draft_verify_logits_tempered)
             draft_prob = draft_verify_probs[0, drafted_token]
             
             # Acceptance probability calculation
@@ -597,10 +617,10 @@ class SpeculativeInferenceEngine(InferenceEngine):
             print(f"   Cumulative acceptance rate: {self.total_tokens_accepted}/{self.total_tokens_generated} = {self.total_tokens_accepted/max(self.total_tokens_generated,1):.1%}")
             print(f"=================END SPECULATIVE DECODING================= \n")
         
-        # CRITICAL FIX: The calling system expects logits, not token IDs
-        # We need to generate logits for the final sequence to maintain compatibility
-        if DEBUG >= 1:
-            print(f"\n🔧 GENERATING FINAL LOGITS:")
+        # Generate final logits for compatibility with the inference engine interface
+        # The node now properly handles token forwarding, so this is just for interface compliance
+        if DEBUG >= 2:
+            print(f"\n🔧 GENERATING FINAL LOGITS FOR INTERFACE COMPLIANCE:")
             print(f"   Final sequence shape: {out.shape}")
             print(f"   Final sequence (last 5 tokens): {out[0, -5:].tolist()}")
         
@@ -612,9 +632,8 @@ class SpeculativeInferenceEngine(InferenceEngine):
             cache
         )
         
-        if DEBUG >= 1:
+        if DEBUG >= 2:
             print(f"   Final logits shape: {final_logits.shape}")
-            print(f"   Final logits range: [{final_logits.min():.3f}, {final_logits.max():.3f}]")
         
         return final_logits, final_cache, all_accepted_tokens
 
