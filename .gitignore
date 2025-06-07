@@ -1,10 +1,41 @@
+# Python virtual environments
+SD-RESET/
+venv/
+env/
+.env/
+.venv/
+
+# Python cache
 __pycache__/
-.venv*
-test_weights.npz
-.exo_used_ports
-.exo_node_id
-.idea
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Cache directories
+.cache/
+downloads/
+.exo/
+
+# Log files
+*.log
+
+# Model downloads
+*.safetensors
+*.bin
+*.pt
+*.ckpt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -128,15 +159,6 @@ celerybeat.pid
 
 # SageMath parsed files
 *.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
 
 # Spyder project settings
 .spyderproject

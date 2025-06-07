@@ -17,6 +17,7 @@ model_cards = {
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-4bit",
       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
+      "TorchDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
     },
     "vocab_size": 128256,  # Fixed: Match TinyGrad MODEL_PARAMS
     "speculative_compatible": ["llama-3.2-8b", "llama-3.2-3b", "llama-3.1-8b", "llama-3.1-70b", "llama-3-8b", "llama-3-70b", "llama-3.3-70b"],
@@ -44,6 +45,7 @@ model_cards = {
     "repo": {
        "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-3B-Instruct-4bit",
        "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
+       "TorchDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
     },
     "vocab_size": 128256,  # Fixed: Match TinyGrad MODEL_PARAMS
     "speculative_compatible": ["llama-3.2-1b", "llama-3.2-8b", "llama-3.1-8b", "llama-3.1-70b", "llama-3-8b", "llama-3-70b", "llama-3.3-70b"],

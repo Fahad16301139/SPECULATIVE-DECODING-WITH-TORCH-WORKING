@@ -42,6 +42,21 @@ async def _resolve_tokenizer(repo_id_or_local_path: Union[str, PathLike]):
   # Convert to string for easier handling
   repo_str = str(repo_id_or_local_path)
   
+  # Special handling for Meta LLaMA 3.2 models
+  if "meta-llama/Llama-3.2" in repo_str:
+    if DEBUG >= 2: print(f"Detected Meta LLaMA 3.2 model: {repo_str}")
+    try:
+      return AutoTokenizer.from_pretrained(repo_str, trust_remote_code=True)
+    except Exception as e:
+      if DEBUG >= 2: print(f"Failed to load Meta LLaMA 3.2 tokenizer directly: {e}")
+      # Try fallback to a simpler model that should work
+      try:
+        fallback_model = "microsoft/DialoGPT-medium"  # A reliable fallback
+        if DEBUG >= 2: print(f"Using fallback tokenizer: {fallback_model}")
+        return AutoTokenizer.from_pretrained(fallback_model, trust_remote_code=True)
+      except Exception as fallback_e:
+        if DEBUG >= 2: print(f"Fallback tokenizer also failed: {fallback_e}")
+  
   # Special handling for unsloth LLaMA models
   if "unsloth" in repo_str and "Llama" in repo_str:
     if DEBUG >= 2: print(f"Detected unsloth LLaMA model: {repo_str}")

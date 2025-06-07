@@ -43,6 +43,7 @@ class Node:
     self.buffered_logits: Dict[str, List[np.ndarray]] = {}
     self.buffered_inputs: Dict[str, List[np.ndarray]] = {}
     self.buffered_partials: Dict[str, List[np.ndarray]] = {}
+    self.original_prompts: Dict[str, List[int]] = {}  # Store original prompt tokens for context preservation
     self.checkpoints: Dict[str, Dict[str, int]] = {}
     
     self.max_generate_tokens = max_generate_tokens
@@ -138,16 +139,16 @@ class Node:
           
           intermediate_result = generated_tokens
           
-          # ARCHITECTURAL FIX: For speculative engines, always use token IDs for forwarding
+          # ARCHITECTURAL FIX: For speculative engines, need special context handling
           if generated_tokens is not None:
-            # Get the full conversation context as token IDs  
-            full_context = self.buffered_token_output[request_id][0]
-            forward = np.array([full_context]).reshape(1, -1)
+            # For speculative engines: forward NEW tokens externally, but maintain FULL context internally
+            forward = np.array([generated_tokens]).reshape(1, -1)
             
             if DEBUG >= 2:
-                print(f"[{request_id}] Context accumulation: {len(generated_tokens)} new tokens, total context: {len(full_context)}")
-                print(f"[{request_id}] Forward shape: {forward.shape}, last 5 tokens: {forward[0, -5:].tolist()}")
-                print(f"[{request_id}] Forward data type: token IDs (not logits)")
+                print(f"[{request_id}] Speculative round: {len(generated_tokens)} new tokens generated")
+                print(f"[{request_id}] Forward shape: {forward.shape}, tokens: {forward[0, :].tolist()}")
+                print(f"[{request_id}] Forward data type: token IDs (NEW tokens only)")
+                print(f"[{request_id}] Total buffered so far: {len(self.buffered_token_output[request_id][0])} tokens")
                 
             # Validate that we're forwarding token IDs, not logits
             if forward.ndim == 3 or (forward.ndim == 2 and forward.shape[-1] > 50000):
@@ -179,6 +180,9 @@ class Node:
     if is_finished:
       if shard.model_id != 'stable-diffusion-2-1-base':
         self.buffered_token_output[request_id] = (self.buffered_token_output[request_id][0], True)
+      # Clean up stored original prompt for speculative decoding
+      if request_id in self.original_prompts:
+        self.original_prompts.pop(request_id)
       self.outstanding_requests.pop(request_id)
     else:
       self.outstanding_requests[request_id] = "waiting"
@@ -244,6 +248,16 @@ class Node:
       return None
     else:
       self.outstanding_requests[request_id] = "processing"
+      
+      # Store original prompt tokens for speculative decoding context preservation
+      if hasattr(self.inference_engine, '__class__') and 'Speculative' in self.inference_engine.__class__.__name__:
+        # Tokenize the prompt to store original context
+        prompt_tokens = await self.inference_engine.encode(shard, prompt)
+        self.original_prompts[request_id] = prompt_tokens.flatten().tolist()
+        if DEBUG >= 2:
+          print(f"[{request_id}] 💾 Stored original prompt tokens: {len(self.original_prompts[request_id])} tokens")
+          print(f"   Tokens: {self.original_prompts[request_id]}")
+      
       result, inference_state, generated_tokens = await self.inference_engine.infer_prompt_multi(request_id, shard, prompt, inference_state)
       ret = await self.process_inference_result(shard, result, request_id, inference_state, generated_tokens)
       return result
@@ -412,6 +426,29 @@ class Node:
 
     try:
       self.outstanding_requests[request_id] = "processing"
+      
+      # CRITICAL FIX: For speculative engines, provide full context instead of just new tokens
+      if (hasattr(self.inference_engine, '__class__') and 
+          'Speculative' in self.inference_engine.__class__.__name__ and
+          request_id in self.buffered_token_output and
+          request_id in self.original_prompts):
+          
+          # Construct full context: original prompt + all generated tokens
+          original_prompt = self.original_prompts[request_id]
+          generated_tokens = self.buffered_token_output[request_id][0]
+          full_context_tokens = original_prompt + generated_tokens
+          
+          # Convert to proper tensor format
+          full_context = np.array([full_context_tokens]).reshape(1, -1)
+          if DEBUG >= 2:
+              print(f"[{request_id}] 🔧 SPECULATIVE CONTEXT FIX:")
+              print(f"   Original tensor: {tensor.shape} = {tensor.flatten()[:5].tolist()}")
+              print(f"   Original prompt: {len(original_prompt)} tokens = {original_prompt}")
+              print(f"   Generated so far: {len(generated_tokens)} tokens = {generated_tokens}")
+              print(f"   Full context: {full_context.shape} = {full_context_tokens}")
+              print(f"   Using full context instead of new tokens for speculative engine")
+          tensor = full_context
+      
       result, inference_state, generated_tokens = await self.inference_engine.infer_tensor_multi(request_id, shard, tensor, inference_state)
       ret = await self.process_inference_result(shard, result, request_id, inference_state, generated_tokens) 
       return ret

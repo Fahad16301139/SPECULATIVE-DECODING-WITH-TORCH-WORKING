@@ -1,6 +1,11 @@
 from pathlib import Path
 import json
 import os
+
+# CRITICAL FIX: Disable TinyGrad's SQLite disk cache to prevent threading issues
+# when using separate executors for speculative decoding
+os.environ["TINYGRAD_CACHE"] = "0"
+
 from exo.inference.tinygrad.models.llama import Transformer, TransformerShard, convert_from_huggingface, fix_bf16, sample_logits
 from exo.inference.shard import Shard
 from exo.inference.tokenizers import resolve_tokenizer
@@ -61,13 +66,17 @@ def build_transformer(model_path: Path, shard: Shard, model_size="8B", device=No
 
   return model
 
-_executor = ThreadPoolExecutor(max_workers=1) # singleton so tinygrad always runs on the same thread
+# FIXED: Each engine gets its own executor for proper isolation
+# We create a single-threaded executor per engine to maintain TinyGrad's threading requirements
+# while ensuring model isolation for speculative decoding
 class TinygradDynamicShardInferenceEngine(InferenceEngine):
   def __init__(self, shard_downloader: ShardDownloader):
     self.shard = None
     self.shard_downloader = shard_downloader
     self.states = OrderedDict()
-    self.executor = _executor
+    # FIXED: Each engine gets its own single-threaded executor for proper isolation
+    self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"tinygrad-{id(self)}")
+    # This ensures each model runs on its own dedicated thread with isolated state
 
   def poll_state(self, x, request_id: str, max_states=2):
     if request_id not in self.states:

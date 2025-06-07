@@ -81,6 +81,7 @@ class InferenceEngine(ABC):
 inference_engine_classes = {
   "mlx": "MLXDynamicShardInferenceEngine",
   "tinygrad": "TinygradDynamicShardInferenceEngine",
+  "torch": "TorchDynamicShardInferenceEngine",
   "dummy": "DummyInferenceEngine",
   "speculative": "SpeculativeInferenceEngine",
 }
@@ -99,6 +100,10 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDown
     import tinygrad.helpers
     tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
     return TinygradDynamicShardInferenceEngine(shard_downloader)
+  
+  elif inference_engine_name == "torch":
+    from exo.inference.torch.sharded_inference_engine import TorchDynamicShardInferenceEngine
+    return TorchDynamicShardInferenceEngine(shard_downloader)
   
   elif inference_engine_name == "dummy":
     from exo.inference.dummy_inference_engine import DummyInferenceEngine
@@ -131,19 +136,35 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDown
       import tinygrad.helpers
       tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
       target_engine = TinygradDynamicShardInferenceEngine(shard_downloader)
+    elif config['target_engine_name'] == 'torch':
+      from exo.inference.torch.sharded_inference_engine import TorchDynamicShardInferenceEngine
+      target_engine = TorchDynamicShardInferenceEngine(shard_downloader)
     else:
       target_engine = get_inference_engine(config['target_engine_name'], shard_downloader)
     
     # Create draft engine if specified - ALWAYS create a separate instance
     draft_engine = None
     if config['draft_engine_name']:
+      # 🔧 CRITICAL FIX: Create separate shard downloader to prevent model weight sharing
+      # The cached downloader shares weights between engines with same class name
+      from exo.download.new_shard_download import new_shard_downloader
+      draft_shard_downloader = new_shard_downloader()
+      
+      if DEBUG >= 1:
+        print(f"🔧 Created separate shard downloader for draft engine:")
+        print(f"   Target downloader: {id(shard_downloader)}")
+        print(f"   Draft downloader: {id(draft_shard_downloader)}")
+      
       if config['draft_engine_name'] == 'tinygrad':
         from exo.inference.tinygrad.inference import TinygradDynamicShardInferenceEngine  
         import tinygrad.helpers
         tinygrad.helpers.DEBUG.value = int(os.getenv("TINYGRAD_DEBUG", default="0"))
-        draft_engine = TinygradDynamicShardInferenceEngine(shard_downloader)
+        draft_engine = TinygradDynamicShardInferenceEngine(draft_shard_downloader)
+      elif config['draft_engine_name'] == 'torch':
+        from exo.inference.torch.sharded_inference_engine import TorchDynamicShardInferenceEngine
+        draft_engine = TorchDynamicShardInferenceEngine(draft_shard_downloader)
       else:
-        draft_engine = get_inference_engine(config['draft_engine_name'], shard_downloader)
+        draft_engine = get_inference_engine(config['draft_engine_name'], draft_shard_downloader)
     
     return SpeculativeInferenceEngine(
       target_engine=target_engine,
