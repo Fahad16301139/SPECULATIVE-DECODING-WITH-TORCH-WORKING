@@ -9,7 +9,7 @@ model_cards = {
        "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.3-70B-Instruct-4bit",
        "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.3-70B-Instruct",
     },
-    "vocab_size": 128000,  # Standard LLaMA vocabulary
+    "vocab_size": 128256,  # Fixed: Match TinyGrad MODEL_PARAMS
     "speculative_compatible": ["llama-3.2-1b", "llama-3.2-8b", "llama-3.2-3b", "llama-3.1-8b", "llama-3.1-70b", "llama-3-8b", "llama-3-70b"],
   },
   "llama-3.2-1b": {
@@ -28,7 +28,7 @@ model_cards = {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-8bit",
       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
     },
-    "vocab_size": 128000,  # Same as 1B model
+    "vocab_size": 128256,  # Fixed: Match TinyGrad MODEL_PARAMS  
     "speculative_compatible": ["llama-3.2-1b", "llama-3.2-8b", "llama-3.2-3b"],
   },
   "llama-3.2-8b": {
@@ -37,7 +37,7 @@ model_cards = {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-8B-Instruct-4bit",
       "TinygradDynamicShardInferenceEngine": "meta-llama/Llama-3.1-8B",
     },
-    "vocab_size": 128000,  # Standard LLaMA vocabulary
+    "vocab_size": 128256,  # Fixed: Match TinyGrad MODEL_PARAMS
     "speculative_compatible": ["llama-3.2-1b", "llama-3.2-3b", "llama-3.1-8b", "llama-3.1-70b", "llama-3-8b", "llama-3-70b", "llama-3.3-70b"],
   },
   "llama-3.2-3b": {
@@ -56,7 +56,7 @@ model_cards = {
        "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-3B-Instruct-8bit",
        "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
     },
-    "vocab_size": 128000,  # Same as 3B model
+    "vocab_size": 128256,  # Fixed: Match TinyGrad MODEL_PARAMS
     "speculative_compatible": ["llama-3.2-1b", "llama-3.2-8b", "llama-3.2-3b"],
   },
   "llama-3.2-3b-bf16": {
@@ -180,9 +180,25 @@ model_cards = {
   "llava-1.5-7b-hf": { "layers": 32, "repo": { "MLXDynamicShardInferenceEngine": "llava-hf/llava-1.5-7b-hf", }, },
   ### qwen
   "qwen-2.5-0.5b": { "layers": 28, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-0.5B-Instruct-4bit", }, },
-  "qwen-2.5-1.5b": { "layers": 28, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-1.5B-Instruct-4bit", }, },
+  "qwen-2.5-1.5b": { 
+    "layers": 28, 
+    "repo": { 
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-1.5B-Instruct",
+    }, 
+    "vocab_size": 151936,  # Qwen vocabulary size
+    "speculative_compatible": ["qwen-2.5-3b", "qwen-2.5-7b", "qwen-2.5-14b"],
+  },
   "qwen-2.5-coder-1.5b": { "layers": 28, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit", }, },
-  "qwen-2.5-3b": { "layers": 36, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-3B-Instruct-4bit", }, },
+  "qwen-2.5-3b": { 
+    "layers": 36, 
+    "repo": { 
+      "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+      "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-3B-Instruct",
+    }, 
+    "vocab_size": 151936,  # Qwen vocabulary size
+    "speculative_compatible": ["qwen-2.5-1.5b", "qwen-2.5-7b", "qwen-2.5-14b"],
+  },
   "qwen-2.5-coder-3b": { "layers": 36, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-3B-Instruct-4bit", }, },
   "qwen-2.5-7b": { "layers": 28, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-7B-Instruct-4bit", }, },
   "qwen-2.5-coder-7b": { "layers": 28, "repo": { "MLXDynamicShardInferenceEngine": "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit", }, },

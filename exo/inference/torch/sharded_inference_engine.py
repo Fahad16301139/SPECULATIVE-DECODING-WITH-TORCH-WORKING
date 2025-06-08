@@ -422,20 +422,41 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
           # No prior state - create fresh state
           pass
         elif self.state.input_pos.size(-1) != current_seq_len:
-          # Sequence length mismatch - need fresh state for speculative verification
+          # Sequence length mismatch - adapt for speculative verification
+          prev_seq_len = self.state.input_pos.size(-1)
+          
           if DEBUG >= 1:
-            print(f"🔄 PyTorch engine: Sequence length mismatch ({self.state.input_pos.size(-1)} → {current_seq_len}) - reinitializing for speculative verification")
+            print(f"🔄 PyTorch engine: Sequence length mismatch ({prev_seq_len} → {current_seq_len}) - adapting for speculative verification")
           
-          # Clear existing state to force fresh setup for longer sequence
-          self.state.input_pos = None
-          self.state.mask = None
-          self.state.curr_pos = 0
-          
-          # Reset cache for dimension compatibility
+          # SMART CACHE HANDLING: Only reset if absolutely necessary
           if model_cache and self.sharded_model.model.caches_are_enabled():
-            self.sharded_model.model.reset_caches()
-            if DEBUG >= 1:
+            cache_seq_len = getattr(self.sharded_model.model, 'decoder_max_cache_seq_len', current_seq_len)
+            
+            if current_seq_len <= cache_seq_len and abs(current_seq_len - prev_seq_len) <= 5:
+              # Small extension that fits in cache - preserve context
+              if DEBUG >= 1:
+                print(f"   ✅ Cache preservation: {current_seq_len} <= {cache_seq_len}, small extension ({abs(current_seq_len - prev_seq_len)} tokens)")
+              
+              # Update state without full reset
+              self.state.input_pos = None   # Will regenerate
+              self.state.mask = None        # Will regenerate  
+              # Keep curr_pos to maintain context flow
+            else:
+              # Large extension or cache overflow - need reset
+              if DEBUG >= 1:
+                print(f"   🔄 Cache reset needed: seq_len={current_seq_len}, cache_len={cache_seq_len}, extension={abs(current_seq_len - prev_seq_len)}")
+              
+              # Full reset for major changes
+              self.state.input_pos = None
+              self.state.mask = None
+              self.state.curr_pos = 0
+              self.sharded_model.model.reset_caches()
               print(f"   🔄 Cache reset for sequence length change")
+          else:
+            # Non-cached model - just update state
+            self.state.input_pos = None
+            self.state.mask = None
+            self.state.curr_pos = 0
         
         if self.state.input_pos is None or self.state.mask is None:
           if DEBUG >= 2:

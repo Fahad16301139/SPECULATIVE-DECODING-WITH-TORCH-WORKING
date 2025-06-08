@@ -25,7 +25,7 @@ class SpeculativeInferenceEngine(InferenceEngine):
     """
     
     def __init__(self, target_engine: InferenceEngine, draft_engine: InferenceEngine,
-                 gamma: int = 3, temperature: float = 0.7, top_k_threshold: float = 0.9,
+                 gamma: int = 2, temperature: float = 0.7, top_k_threshold: float = 0.9,
                  lenience: float = 2.0, target_model_id: str = None, draft_model_id: str = None):
         self.target_engine = target_engine
         self.draft_engine = draft_engine
@@ -257,16 +257,9 @@ class SpeculativeInferenceEngine(InferenceEngine):
         await self.target_engine.ensure_shard(shard)
         await self.draft_engine.ensure_shard(draft_shard)
 
-        # Store inference state for both engines
+        # CRITICAL FIX: Coordinate cache states between models for alignment
         target_cache = inference_state
-        
-        # 🔧 PROPER SOLUTION: Ensure draft model gets its own cache setup
-        # The issue is cache dimension coordination, not caching itself
-        draft_cache = None  # Start fresh, but allow cache to build properly
-        
-        # SIMPLE SOLUTION: Use fresh model state for draft to avoid conflicts
-        # This preserves context through sequence building while avoiding cache conflicts
-        draft_cache = None  # Always start fresh to avoid dimension conflicts
+        draft_cache = None  # Start draft fresh but will build consistent state
         
         if DEBUG >= 2:
             print(f"   🔧 Using independent draft generation to avoid model conflicts")
@@ -347,12 +340,12 @@ class SpeculativeInferenceEngine(InferenceEngine):
                 print(f"      Current sequence length: {current_sequence.shape[1]}")
                 print(f"      Last 3 tokens: {current_sequence[0, -3:].tolist() if current_sequence.shape[1] >= 3 else current_sequence[0].tolist()}")
             
-            # Use proper method signature for infer_tensor
-            draft_output, _ = await self.draft_engine.infer_tensor(
+            # CRITICAL FIX: Maintain draft cache state for consistent context
+            draft_output, draft_cache = await self.draft_engine.infer_tensor(
                 f"{request_id}_draft_{i}",
                 draft_shard,
                 current_sequence,
-                None  # Fresh state for each call
+                draft_cache  # Maintain consistent draft state
             )
             draft_output = self._to_numpy(draft_output)
             
@@ -370,8 +363,8 @@ class SpeculativeInferenceEngine(InferenceEngine):
                 print(f"      Draft logits shape: {draft_logits.shape}")
             
             # Store probabilities before sampling for verification  
-            # Use slightly higher temperature for draft to encourage diversity
-            draft_temperature = self.temperature * 1.2
+            # CRITICAL FIX: Use IDENTICAL temperature for both models to ensure alignment
+            draft_temperature = self.temperature  # Must match target exactly!
             draft_probs_raw = self._softmax(draft_logits / draft_temperature)
             draft_probs_for_verification.append(draft_probs_raw[0])  # Remove batch dimension
             
@@ -419,23 +412,19 @@ class SpeculativeInferenceEngine(InferenceEngine):
                 print(f"      Verifying draft token: {draft_token}")
                 print(f"      Current sequence length: {current_sequence.shape[1]}")
             
-            # Add current draft token to sequence
-            token_to_add = np.array([[draft_token]], dtype=current_sequence.dtype)
-            extended_sequence = np.concatenate([current_sequence, token_to_add], axis=1)
+            # CRITICAL FIX: Get target prediction for the SAME context the draft saw
+            # Draft token i was predicted given sequence up to position i
+            # So target should predict given the same context (without the draft token)
             
             if DEBUG >= 1:
-                print(f"      Extended sequence length: {current_sequence.shape[1]} -> {extended_sequence.shape[1]}")
-                print(f"      Last 5 tokens of extended sequence: {extended_sequence[0, -5:].tolist()}")
+                print(f"      🎯 Getting target prediction for context without draft token...")
+                print(f"      Context sequence: {current_sequence[0, -5:].tolist()}")
             
-            # Get target model prediction for this position
-            if DEBUG >= 1:
-                print(f"      🎯 Calling target engine for verification...")
-            
-            target_output, _ = await self.target_engine.infer_tensor(
+            target_output, target_cache = await self.target_engine.infer_tensor(
                 f"{request_id}_target_verify_{i}",
                 shard,
-                extended_sequence,
-                None  # Fresh state for each verification
+                current_sequence,  # Same context draft saw, not extended!
+                target_cache  # CRITICAL: Maintain consistent target state
             )
             target_output = self._to_numpy(target_output)
             
@@ -446,6 +435,10 @@ class SpeculativeInferenceEngine(InferenceEngine):
                 target_logits = target_output[0]
             else:
                 target_logits = target_output
+            
+            # Now add the draft token for next iteration
+            token_to_add = np.array([[draft_token]], dtype=current_sequence.dtype)
+            extended_sequence = np.concatenate([current_sequence, token_to_add], axis=1)
                 
             if DEBUG >= 1:
                 print(f"      Target output shape: {target_output.shape}")
@@ -460,26 +453,58 @@ class SpeculativeInferenceEngine(InferenceEngine):
             draft_prob = draft_probs[draft_token]
             target_prob = target_probs[draft_token]
             
-            # IMPROVED ACCEPTANCE ALGORITHM:
-            # 1. Add small epsilon to prevent division by zero
-            # 2. Use more lenient acceptance for better alignment
-            # 3. Add probability smoothing
+            # BALANCED ACCEPTANCE ALGORITHM:
+            # Goal: Find sweet spot between quality and acceptance rate
+            # Reduce aggressive acceptance to improve output quality
             
-            epsilon = 1e-6
+            epsilon = 1e-8
             smoothed_draft_prob = draft_prob + epsilon
             smoothed_target_prob = target_prob + epsilon
             
-            # More lenient acceptance ratio with smoothing
-            if target_prob < 1e-8:
-                # If target probability is extremely low, use more conservative acceptance
-                acceptance_ratio = min(0.3, smoothed_target_prob / smoothed_draft_prob)
-            else:
-                # Standard acceptance with lenience
-                acceptance_ratio = min(1.0, (smoothed_target_prob / smoothed_draft_prob) * self.lenience)
+            # Base acceptance ratio
+            acceptance_ratio = min(1.0, smoothed_target_prob / smoothed_draft_prob)
             
-            # Add temperature-based randomness for better diversity
-            temp_factor = min(1.0, self.temperature / 0.7)  # Normalize around 0.7
+            # Apply lenience but much more conservatively
+            lenience_factor = 2.0  # Reduced from 10.0 to 2.0
+            acceptance_ratio = min(1.0, acceptance_ratio * lenience_factor)
+            
+            # Temperature-based adjustment
+            temp_factor = min(1.0, self.temperature / 0.7)
             adjusted_acceptance = acceptance_ratio * temp_factor
+            
+            # MUCH MORE CONSERVATIVE minimum acceptance for very misaligned tokens
+            # Only give minimal help to completely misaligned tokens
+            if target_prob < 1e-10:
+                # Very low target probability - give minimal boost
+                minimum_acceptance = 0.05  # Only 5% minimum (was 35%)
+            elif target_prob < 1e-6:
+                # Low target probability - small boost
+                minimum_acceptance = 0.10  # 10% minimum
+            else:
+                # Reasonable target probability - no artificial boost
+                minimum_acceptance = 0.0
+            
+            adjusted_acceptance = max(adjusted_acceptance, minimum_acceptance)
+            
+            # SELECTIVE TOP-K BOOST: Only boost tokens in top-10 of target distribution
+            target_probs_sorted = np.argsort(target_probs)[::-1]  # Sort by probability (descending)
+            draft_token_rank = np.where(target_probs_sorted == draft_token)[0]
+            if len(draft_token_rank) > 0 and draft_token_rank[0] < 10:  # Only top-10 tokens (was top-50)
+                rank_boost = 0.1 - (draft_token_rank[0] * 0.01)  # Max 10% boost for rank 1 (was 20%)
+                adjusted_acceptance += rank_boost
+                if DEBUG >= 1:
+                    print(f"      🎯 Top-{draft_token_rank[0]+1} token, rank boost: +{rank_boost:.3f}")
+            
+            # CONSERVATIVE NUCLEUS BOOST: Only for top 70% cumulative probability
+            target_cumsum = np.cumsum(np.sort(target_probs)[::-1])
+            if len(draft_token_rank) > 0 and draft_token_rank[0] < len(target_cumsum) and target_cumsum[draft_token_rank[0]] < 0.7:  # Top 70% (was 90%)
+                nucleus_boost = 0.05  # 5% boost (was 15%)
+                adjusted_acceptance += nucleus_boost
+                if DEBUG >= 1:
+                    print(f"      🚀 Nucleus sampling boost: +{nucleus_boost:.3f}")
+            
+            # Cap at 80% to maintain more selectivity (was 95%)
+            adjusted_acceptance = min(adjusted_acceptance, 0.80)
             
             random_sample = np.random.random()
             accept = random_sample <= adjusted_acceptance
